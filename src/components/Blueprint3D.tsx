@@ -7,135 +7,101 @@ interface Blueprint3DProps {
   image: HTMLImageElement | null
 }
 
-function HologramMesh({ image }: { image: HTMLImageElement }) {
-  const meshRef = useRef<THREE.InstancedMesh>(null)
-
-  const { positions, colors, count, worldW, worldH } = useMemo(() => {
-    const canvas = document.createElement('canvas')
-    const ctx = canvas.getContext('2d')
-    const maxGridSize = 64
-    const aspect = image.width / image.height
-
-    let gridW = maxGridSize
-    let gridH = maxGridSize
-
-    if (aspect > 1) {
-      gridH = Math.floor(maxGridSize / aspect)
-    } else {
-      gridW = Math.floor(maxGridSize * aspect)
+function BottleBlueprint({ image }: { image: HTMLImageElement }) {
+  const meshRef = useRef<THREE.Group>(null)
+  
+  const points = useMemo(() => {
+    const pts = []
+    const s = 1.0 // Scale factor
+    
+    // Base
+    pts.push(new THREE.Vector2(0, 0))
+    pts.push(new THREE.Vector2(0.8 * s, 0))
+    
+    // Base curve up
+    pts.push(new THREE.Vector2(0.85 * s, 0.1 * s))
+    pts.push(new THREE.Vector2(0.86 * s, 0.2 * s))
+    
+    // Main body (slight waist curve)
+    for(let i = 0; i <= 10; i++) {
+      const t = i / 10
+      const y = (0.2 + t * 1.5) * s
+      const x = (0.86 - Math.sin(t * Math.PI) * 0.04) * s
+      pts.push(new THREE.Vector2(x, y))
     }
+    
+    // Shoulder
+    pts.push(new THREE.Vector2(0.8 * s, 1.8 * s))
+    pts.push(new THREE.Vector2(0.7 * s, 1.9 * s))
+    pts.push(new THREE.Vector2(0.5 * s, 2.1 * s))
+    pts.push(new THREE.Vector2(0.42 * s, 2.2 * s))
+    
+    // Neck
+    pts.push(new THREE.Vector2(0.42 * s, 2.5 * s))
+    
+    // Cap
+    pts.push(new THREE.Vector2(0.47 * s, 2.5 * s))
+    pts.push(new THREE.Vector2(0.47 * s, 2.8 * s))
+    pts.push(new THREE.Vector2(0.42 * s, 2.85 * s))
+    
+    // Top
+    pts.push(new THREE.Vector2(0, 2.85 * s))
 
-    canvas.width = gridW
-    canvas.height = gridH
+    return pts
+  }, [])
 
-    if (ctx) {
-      ctx.drawImage(image, 0, 0, gridW, gridH)
-      const imgData = ctx.getImageData(0, 0, gridW, gridH).data
-
-      const positions = []
-      const colors = []
-      let count = 0
-
-      const worldW = 5
-      const worldH = 5 / aspect
-      const stepX = worldW / gridW
-      const stepZ = worldH / gridH
-
-      for (let y = 0; y < gridH; y++) {
-        for (let x = 0; x < gridW; x++) {
-          const i = (y * gridW + x) * 4
-          const r = imgData[i]
-          const g = imgData[i + 1]
-          const b = imgData[i + 2]
-
-          // Calculate brightness to determine block height
-          const brightness = (r + g + b) / (3 * 255)
-
-          // Calculate distance from center to mask out background/sky noise
-          const cx = x / gridW - 0.5
-          const cy = y / gridH - 0.5
-          const distFromCenter = Math.sqrt(cx*cx + cy*cy) * 2
-
-          // Only extrude pixels that are bright enough and near the center of the image
-          if (brightness > 0.2 && distFromCenter < 0.85) { 
-            // Quantize brightness into 6 distinct "floors" or levels for a structured architectural look
-            const levels = 6
-            const quantizedBrightness = Math.floor(brightness * levels) / levels
-            
-            // Central pixels get a slight height boost to form a peak/roof
-            const centerBoost = Math.max(0, 0.5 - distFromCenter) * 1.5
-            
-            const h = (quantizedBrightness * 2.0) + centerBoost + 0.2 // Base height + quantized height + center boost
-            const posX = (x - gridW / 2) * stepX + stepX / 2
-            const posZ = (y - gridH / 2) * stepZ + stepZ / 2
-
-            positions.push({ x: posX, y: h / 2, z: posZ, h, stepX, stepZ })
-            
-            // Color based on height to emphasize structure
-            const isTall = h > 1.5
-            const color = isTall ? new THREE.Color('#b026ff') : new THREE.Color('#00f0ff').lerp(new THREE.Color(`rgb(${r}, ${g}, ${b})`), 0.5)
-            colors.push(color)
-            count++
-          }
-        }
-      }
-      return { positions, colors, count, worldW, worldH }
-    }
-    return { positions: [], colors: [], count: 0, worldW: 5, worldH: 5 }
+  const texture = useMemo(() => {
+    if (!image) return null
+    const tex = new THREE.Texture(image)
+    tex.wrapS = THREE.RepeatWrapping
+    tex.wrapT = THREE.ClampToEdgeWrapping
+    tex.repeat.set(1, 1)
+    tex.needsUpdate = true
+    tex.colorSpace = THREE.SRGBColorSpace
+    return tex
   }, [image])
-
-  const dummy = useMemo(() => new THREE.Object3D(), [])
-
-  useEffect(() => {
-    if (meshRef.current && count > 0) {
-      positions.forEach((pos, i) => {
-        dummy.position.set(pos.x, pos.y, pos.z)
-        dummy.scale.set(pos.stepX * 0.9, pos.h, pos.stepZ * 0.9)
-        dummy.updateMatrix()
-        meshRef.current!.setMatrixAt(i, dummy.matrix)
-        meshRef.current!.setColorAt(i, colors[i])
-      })
-      meshRef.current.instanceMatrix.needsUpdate = true
-      if (meshRef.current.instanceColor) {
-        meshRef.current.instanceColor.needsUpdate = true
-      }
-    }
-  }, [positions, colors, count, dummy])
 
   useFrame((state) => {
     if (meshRef.current) {
-      // Gentle orbit oscillation
-      meshRef.current.parent!.rotation.y = Math.sin(state.clock.getElapsedTime() * 0.2) * 0.1
+      meshRef.current.rotation.y = state.clock.getElapsedTime() * 0.5
     }
   })
 
-  if (count === 0) return null
-
   return (
     <Float speed={1.5} rotationIntensity={0.1} floatIntensity={0.2}>
-      <group rotation={[-Math.PI / 4, 0, 0]}>
-        <instancedMesh ref={meshRef} args={[undefined, undefined, count]} castShadow receiveShadow>
-          <boxGeometry args={[1, 1, 1]} />
-          <meshStandardMaterial
-            roughness={0.3}
-            metalness={0.8}
+      <group ref={meshRef} position={[0, -1.2, 0]}>
+        
+        {/* Holographic inner bottle with scanned texture mapped */}
+        <mesh>
+          <latheGeometry args={[points, 64]} />
+          <meshStandardMaterial 
+            map={texture}
+            color="#00f0ff"
             emissive="#00f0ff"
-            emissiveIntensity={0.15}
-            // @ts-ignore
-            vertexColors
+            emissiveMap={texture}
+            emissiveIntensity={0.6}
+            transparent
+            opacity={0.8}
+            roughness={0.2}
+            metalness={0.8}
           />
-        </instancedMesh>
-
-        {/* Foundation Base */}
-        <mesh position={[0, -0.1, 0]}>
-          <boxGeometry args={[worldW + 0.4, 0.1, worldH + 0.4]} />
-          <meshBasicMaterial color="#001122" transparent opacity={0.6} />
         </mesh>
 
-        {/* Glowing Perimeter */}
-        <mesh position={[0, 0, 0]}>
-          <boxGeometry args={[worldW + 0.4, 0.05, worldH + 0.4]} />
-          <meshBasicMaterial wireframe color="#00f0ff" transparent opacity={0.3} />
+        {/* Outer glowing wireframe shell representing the AI scanning bounds */}
+        <mesh scale={[1.02, 1.02, 1.02]}>
+          <latheGeometry args={[points, 32]} />
+          <meshBasicMaterial 
+            color="#00ffff" 
+            wireframe 
+            transparent 
+            opacity={0.3} 
+          />
+        </mesh>
+
+        {/* Base Plate projection indicator */}
+        <mesh position={[0, -0.05, 0]}>
+          <cylinderGeometry args={[1.2, 1.2, 0.05, 32]} />
+          <meshBasicMaterial color="#00ffff" wireframe transparent opacity={0.4} />
         </mesh>
       </group>
     </Float>
@@ -167,15 +133,15 @@ function ScanLine() {
 
   useFrame((state) => {
     if (lineRef.current) {
-      // Move scanline across the 3D space
-      lineRef.current.position.y = Math.sin(state.clock.getElapsedTime() * 1.5) * 2.5
+      // Move scanline up and down the bottle height (approx 3 units)
+      lineRef.current.position.y = -1.2 + Math.abs(Math.sin(state.clock.getElapsedTime() * 1.5)) * 3.0
     }
   })
 
   return (
-    <mesh ref={lineRef} position={[0, 0, 1]}>
-      <boxGeometry args={[5, 0.05, 0.05]} />
-      <meshBasicMaterial color="#00f0ff" transparent opacity={0.8} />
+    <mesh ref={lineRef} position={[0, -1.2, 0]}>
+      <ringGeometry args={[0.3, 1.3, 32]} />
+      <meshBasicMaterial color="#00f0ff" side={THREE.DoubleSide} transparent opacity={0.6} />
     </mesh>
   )
 }
@@ -212,12 +178,12 @@ export function Blueprint3D({ image }: Blueprint3DProps) {
         </p>
       </div>
 
-      <Canvas shadows dpr={[1, 1.5]} performance={{ min: 0.5 }} camera={{ position: [0, 2, 8], fov: 45 }}>
-        <PerspectiveCamera makeDefault position={[4, 4, 8]} fov={40} />
+      <Canvas shadows dpr={[1, 1.5]} performance={{ min: 0.5 }} camera={{ position: [0, 1, 6], fov: 45 }}>
+        <PerspectiveCamera makeDefault position={[3, 2, 6]} fov={40} />
         <OrbitControls
           enablePan={true}
-          minDistance={4}
-          maxDistance={15}
+          minDistance={3}
+          maxDistance={12}
           autoRotate={false}
           makeDefault
         />
@@ -227,11 +193,11 @@ export function Blueprint3D({ image }: Blueprint3DProps) {
         <spotLight position={[-10, 20, 10]} angle={0.2} penumbra={1} intensity={2} castShadow />
         <directionalLight position={[0, 10, 0]} intensity={0.5} color="#00f0ff" />
 
-        <HologramMesh image={image} />
+        <BottleBlueprint image={image} />
         <SimulationEnvironment />
         <ScanLine />
 
-        <fog attach="fog" args={['#05080a', 8, 20]} />
+        <fog attach="fog" args={['#05080a', 6, 15]} />
       </Canvas>
     </div>
   )
