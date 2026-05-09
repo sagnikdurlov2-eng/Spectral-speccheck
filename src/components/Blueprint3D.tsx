@@ -7,102 +7,122 @@ interface Blueprint3DProps {
   image: HTMLImageElement | null
 }
 
-function BottleBlueprint({ image }: { image: HTMLImageElement }) {
+function DynamicBlueprint({ image }: { image: HTMLImageElement }) {
   const meshRef = useRef<THREE.Group>(null)
   
-  const points = useMemo(() => {
-    const pts = []
-    const s = 1.0 // Scale factor
+  const { geometry, texture, worldW, worldH } = useMemo(() => {
+    if (!image) return { geometry: null, texture: null, worldW: 5, worldH: 5 }
+
+    const canvas = document.createElement('canvas')
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })
     
-    // Base
-    pts.push(new THREE.Vector2(0, 0))
-    pts.push(new THREE.Vector2(0.8 * s, 0))
+    const segs = 128
+    const aspect = image.width / image.height
     
-    // Base curve up
-    pts.push(new THREE.Vector2(0.85 * s, 0.1 * s))
-    pts.push(new THREE.Vector2(0.86 * s, 0.2 * s))
-    
-    // Main body (slight waist curve)
-    for(let i = 0; i <= 10; i++) {
-      const t = i / 10
-      const y = (0.2 + t * 1.5) * s
-      const x = (0.86 - Math.sin(t * Math.PI) * 0.04) * s
-      pts.push(new THREE.Vector2(x, y))
+    let w = segs
+    let h = segs
+    if (aspect > 1) {
+      h = Math.floor(segs / aspect)
+    } else {
+      w = Math.floor(segs * aspect)
     }
-    
-    // Shoulder
-    pts.push(new THREE.Vector2(0.8 * s, 1.8 * s))
-    pts.push(new THREE.Vector2(0.7 * s, 1.9 * s))
-    pts.push(new THREE.Vector2(0.5 * s, 2.1 * s))
-    pts.push(new THREE.Vector2(0.42 * s, 2.2 * s))
-    
-    // Neck
-    pts.push(new THREE.Vector2(0.42 * s, 2.5 * s))
-    
-    // Cap
-    pts.push(new THREE.Vector2(0.47 * s, 2.5 * s))
-    pts.push(new THREE.Vector2(0.47 * s, 2.8 * s))
-    pts.push(new THREE.Vector2(0.42 * s, 2.85 * s))
-    
-    // Top
-    pts.push(new THREE.Vector2(0, 2.85 * s))
 
-    return pts
-  }, [])
+    canvas.width = w
+    canvas.height = h
 
-  const texture = useMemo(() => {
-    if (!image) return null
+    let geom = null
+    const worldW = 5
+    const worldH = 5 / aspect
+
+    if (ctx) {
+      ctx.drawImage(image, 0, 0, w, h)
+      const imgData = ctx.getImageData(0, 0, w, h).data
+
+      geom = new THREE.PlaneGeometry(worldW, worldH, w - 1, h - 1)
+      const positions = geom.attributes.position.array
+
+      for (let i = 0; i < positions.length; i += 3) {
+        const vertexIndex = i / 3
+        const x = vertexIndex % w
+        const y = Math.floor(vertexIndex / w)
+        
+        if (y >= h) continue
+
+        const pixelY = y
+        const pixelIdx = (pixelY * w + x) * 4
+        
+        const r = imgData[pixelIdx]
+        const g = imgData[pixelIdx + 1]
+        const b = imgData[pixelIdx + 2]
+
+        // Calculate brightness
+        const brightness = (r + g + b) / (3 * 255)
+        
+        // Extrude z based on brightness (bright pixels push OUT)
+        positions[i + 2] = brightness * 1.5 
+      }
+      geom.computeVertexNormals()
+    }
+
     const tex = new THREE.Texture(image)
-    tex.wrapS = THREE.RepeatWrapping
-    tex.wrapT = THREE.ClampToEdgeWrapping
-    tex.repeat.set(1, 1)
-    tex.needsUpdate = true
     tex.colorSpace = THREE.SRGBColorSpace
-    return tex
+    tex.needsUpdate = true
+
+    return { geometry: geom, texture: tex, worldW, worldH }
   }, [image])
 
   useFrame((state) => {
     if (meshRef.current) {
-      meshRef.current.rotation.y = state.clock.getElapsedTime() * 0.5
+      // Gentle orbit oscillation to show depth
+      meshRef.current.parent!.rotation.y = Math.sin(state.clock.getElapsedTime() * 0.2) * 0.1
     }
   })
 
+  if (!geometry) return null
+
   return (
     <Float speed={1.5} rotationIntensity={0.1} floatIntensity={0.2}>
-      <group ref={meshRef} position={[0, -1.2, 0]}>
-        
-        {/* Holographic inner bottle with scanned texture mapped */}
-        <mesh>
-          <latheGeometry args={[points, 64]} />
-          <meshStandardMaterial 
-            map={texture}
-            color="#00f0ff"
-            emissive="#00f0ff"
-            emissiveMap={texture}
-            emissiveIntensity={0.6}
-            transparent
-            opacity={0.8}
-            roughness={0.2}
-            metalness={0.8}
-          />
-        </mesh>
+      <group rotation={[-Math.PI / 4, 0, 0]}>
+        <group ref={meshRef}>
+          
+          {/* Extruded relief map */}
+          <mesh geometry={geometry} receiveShadow castShadow>
+            <meshStandardMaterial 
+              map={texture}
+              color="#00f0ff"
+              emissive="#00f0ff"
+              emissiveMap={texture}
+              emissiveIntensity={0.3}
+              transparent
+              opacity={0.9}
+              roughness={0.4}
+              metalness={0.6}
+              side={THREE.DoubleSide}
+            />
+          </mesh>
 
-        {/* Outer glowing wireframe shell representing the AI scanning bounds */}
-        <mesh scale={[1.02, 1.02, 1.02]}>
-          <latheGeometry args={[points, 32]} />
-          <meshBasicMaterial 
-            color="#00ffff" 
-            wireframe 
-            transparent 
-            opacity={0.3} 
-          />
-        </mesh>
+          {/* Wireframe overlay for blueprint look */}
+          <mesh geometry={geometry} position={[0, 0, 0.01]}>
+            <meshBasicMaterial 
+              color="#00ffff" 
+              wireframe 
+              transparent 
+              opacity={0.15} 
+            />
+          </mesh>
 
-        {/* Base Plate projection indicator */}
-        <mesh position={[0, -0.05, 0]}>
-          <cylinderGeometry args={[1.2, 1.2, 0.05, 32]} />
-          <meshBasicMaterial color="#00ffff" wireframe transparent opacity={0.4} />
-        </mesh>
+          {/* Foundation Base */}
+          <mesh position={[0, 0, -0.1]}>
+            <boxGeometry args={[worldW + 0.4, worldH + 0.4, 0.1]} />
+            <meshBasicMaterial color="#001122" transparent opacity={0.6} />
+          </mesh>
+
+          {/* Glowing Perimeter */}
+          <mesh position={[0, 0, -0.05]}>
+            <boxGeometry args={[worldW + 0.4, worldH + 0.4, 0.05]} />
+            <meshBasicMaterial wireframe color="#00f0ff" transparent opacity={0.3} />
+          </mesh>
+        </group>
       </group>
     </Float>
   )
@@ -133,15 +153,15 @@ function ScanLine() {
 
   useFrame((state) => {
     if (lineRef.current) {
-      // Move scanline up and down the bottle height (approx 3 units)
-      lineRef.current.position.y = -1.2 + Math.abs(Math.sin(state.clock.getElapsedTime() * 1.5)) * 3.0
+      // Move scanline across the 3D space
+      lineRef.current.position.y = Math.sin(state.clock.getElapsedTime() * 1.5) * 2.5
     }
   })
 
   return (
-    <mesh ref={lineRef} position={[0, -1.2, 0]}>
-      <ringGeometry args={[0.3, 1.3, 32]} />
-      <meshBasicMaterial color="#00f0ff" side={THREE.DoubleSide} transparent opacity={0.6} />
+    <mesh ref={lineRef} position={[0, 0, 1]}>
+      <boxGeometry args={[6, 0.05, 0.05]} />
+      <meshBasicMaterial color="#00f0ff" transparent opacity={0.8} />
     </mesh>
   )
 }
@@ -178,12 +198,12 @@ export function Blueprint3D({ image }: Blueprint3DProps) {
         </p>
       </div>
 
-      <Canvas shadows dpr={[1, 1.5]} performance={{ min: 0.5 }} camera={{ position: [0, 1, 6], fov: 45 }}>
-        <PerspectiveCamera makeDefault position={[3, 2, 6]} fov={40} />
+      <Canvas shadows dpr={[1, 1.5]} performance={{ min: 0.5 }} camera={{ position: [0, 2, 8], fov: 45 }}>
+        <PerspectiveCamera makeDefault position={[4, 4, 8]} fov={40} />
         <OrbitControls
           enablePan={true}
-          minDistance={3}
-          maxDistance={12}
+          minDistance={4}
+          maxDistance={15}
           autoRotate={false}
           makeDefault
         />
@@ -193,11 +213,11 @@ export function Blueprint3D({ image }: Blueprint3DProps) {
         <spotLight position={[-10, 20, 10]} angle={0.2} penumbra={1} intensity={2} castShadow />
         <directionalLight position={[0, 10, 0]} intensity={0.5} color="#00f0ff" />
 
-        <BottleBlueprint image={image} />
+        <DynamicBlueprint image={image} />
         <SimulationEnvironment />
         <ScanLine />
 
-        <fog attach="fog" args={['#05080a', 6, 15]} />
+        <fog attach="fog" args={['#05080a', 8, 20]} />
       </Canvas>
     </div>
   )
